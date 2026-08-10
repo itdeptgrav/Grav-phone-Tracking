@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Call Recorder</string>
+
+    <!-- Notification -->
+    <string name="recording_channel_name">Call Recording</string>
+    <string name="recording_channel_desc">Shown while a call is being recorded.</string>
+    <string name="recording_notification_title">Recording call</string>
+    <string name="stop">Stop</string>
+</resources>

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      PERMISSIONS
+      Only what the app actually uses. Each is requested at runtime with an
+      explanation (see ui/permissions). READ_CALL_LOG and READ_CONTACTS are
+      optional: the app degrades gracefully to showing the raw number.
+    -->
+
+    <!-- Record microphone audio during a call (Mode B). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Detect call state (ringing / off-hook / idle). -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!--
+      Read the call log to recover the phone number and direction after a call.
+      On Android 9+ the number is frequently NULL in the PHONE_STATE broadcast,
+      so we reconcile against the call log. Optional — degrade to "Unknown".
+    -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+
+    <!-- Resolve a number to a saved contact name. Optional. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Post the mandatory "recording" foreground notification (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      "Display over other apps". This is the key to automatic recording on
+      Android 12+: an app holding SYSTEM_ALERT_WINDOW is exempt from the
+      background foreground-service-start restriction, so the call-state
+      broadcast can legitimately start the microphone recording service.
+      https://developer.android.com/guide/components/foreground-services#background-start-restriction-exemptions
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Ask to be excluded from battery optimization so we aren't killed mid-call. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Foreground service that holds the microphone during a call. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14 (API 34) requires the typed permission for a mic FGS. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <application
+        android:name=".CallRecorderApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PersonalCallRecorder"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.PersonalCallRecorder">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Share target: receives an audio recording shared from another app
+          (e.g. Google Phone → Share → PersonalCallRecorder) and imports it.
+          Invisible/translucent; finishes immediately after importing.
+        -->
+        <activity
+            android:name=".ShareImportActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- FileProvider for exporting/sharing recordings out of app-private storage. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
+          Foreground recording service. type=microphone is mandatory on API 34+.
+          Not exported: only started from within the app / receiver.
+        -->
+        <!--
+          Untyped foreground service. Because the app targets SDK 33, the
+          Android 14 typed-FGS ("microphone") requirement does not apply, and a
+          background-triggered mic recording is permitted with the overlay
+          exemption. (If targetSdk is ever raised to 34+, restore
+          android:foregroundServiceType="microphone" here.)
+        -->
+        <service
+            android:name=".recording.RecordingService"
+            android:exported="false" />
+
+        <!--
+          Call-state receiver. PHONE_STATE is a still-allowed implicit broadcast.
+          This is the entry point for automatic recording. Note: starting a
+          foreground service from this background broadcast is subject to OS
+          limits on Android 12+ — the service start is wrapped in try/catch and
+          the failure is surfaced instead of crashing (see RecordingService).
+        -->
+        <receiver
+            android:name=".call.PhoneStateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>
