@@ -2,6 +2,7 @@ package com.personal.callrecorder.call
 
 import android.content.Context
 import android.util.Log
+import com.personal.callrecorder.automation.AutomationController
 import com.personal.callrecorder.contacts.ContactResolver
 import com.personal.callrecorder.data.entity.RecordingStatus
 import com.personal.callrecorder.data.repository.CallRepository
@@ -38,7 +39,8 @@ class CallStateMonitor @Inject constructor(
     private val repository: CallRepository,
     private val contactResolver: ContactResolver,
     private val importer: RecordingImporter,
-    private val time: TimeProvider
+    private val time: TimeProvider,
+    private val automationController: AutomationController
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -82,6 +84,7 @@ class CallStateMonitor @Inject constructor(
             }
 
             CallState.IDLE -> {
+                val realCallEnded = lastState == CallState.OFF_HOOK
                 if (activeSession != null) {
                     endSession()
                 }
@@ -93,6 +96,9 @@ class CallStateMonitor @Inject constructor(
                 // Reset per-call transient state.
                 sawRingingThisCall = false
                 pendingNumber = null
+                if (realCallEnded) {
+                    scheduleShareAutomation()
+                }
             }
         }
         lastState = state
@@ -171,7 +177,14 @@ class CallStateMonitor @Inject constructor(
             )
         }
     }
-
+    private fun scheduleShareAutomation() {
+        scope.launch {
+            delay(6_000L)
+            if (!automationController.running) {
+                automationController.start()
+            }
+        }
+    }
     private companion object {
         const val TAG = "CallStateMonitor"
     }
