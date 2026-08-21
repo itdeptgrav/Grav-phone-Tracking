@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.room.Room
 import com.personal.callrecorder.data.database.CallDatabase
 import com.personal.callrecorder.data.dao.CallDao
-import com.personal.callrecorder.data.dao.MissedCallDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -25,7 +24,4 @@ object DatabaseModule {
 
     @Provides
     fun provideCallDao(database: CallDatabase): CallDao = database.callDao()
-
-    @Provides
-    fun provideMissedCallDao(database: CallDatabase): MissedCallDao = database.missedCallDao()
 }

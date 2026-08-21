@@ -45,11 +45,7 @@
     <!-- Android 14 (API 34) requires the typed permission for a mic FGS. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
-        <queries>
-        <package android:name="com.google.android.dialer" />
-    </queries>
-
-<application
+    <application
         android:name=".CallRecorderApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

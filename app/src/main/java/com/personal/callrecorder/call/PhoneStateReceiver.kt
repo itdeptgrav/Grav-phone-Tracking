@@ -8,11 +8,6 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * Receives the PHONE_STATE broadcast — still an allowed implicit broadcast — and
@@ -36,42 +31,17 @@ class PhoneStateReceiver : BroadcastReceiver() {
         fun callStateMonitor(): CallStateMonitor
     }
 
-  override fun onReceive(context: Context, intent: Intent) {
-    if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
 
-    val pendingResult = goAsync()
+        val monitor = EntryPointAccessors
+            .fromApplication(context.applicationContext, PhoneStateReceiverEntryPoint::class.java)
+            .callStateMonitor()
 
-    CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-        try {
-            val monitor = EntryPointAccessors
-                .fromApplication(
-                    context.applicationContext,
-                    PhoneStateReceiverEntryPoint::class.java
-                )
-                .callStateMonitor()
+        val stateExtra = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+        @Suppress("DEPRECATION")
+        val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
 
-            val stateExtra =
-                intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-
-            @Suppress("DEPRECATION")
-            val number =
-                intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-
-            monitor.onCallStateChanged(
-                CallState.fromExtra(stateExtra),
-                number
-            )
-
-            /*
-             * Keep the broadcast process alive long enough for
-             * CallStateMonitor's post-call delayed automation to fire.
-             * Its current delay is ~1 second.
-             */
-            delay(3_000L)
-
-        } finally {
-            pendingResult.finish()
-        }
+        monitor.onCallStateChanged(CallState.fromExtra(stateExtra), number)
     }
-}
 }

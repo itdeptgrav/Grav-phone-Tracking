@@ -6,7 +6,6 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -43,33 +42,30 @@ class AutomationController @Inject constructor(
     private val _log = MutableStateFlow<List<String>>(emptyList())
     val log: StateFlow<List<String>> = _log
 
-    private val _launchRequests = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1
-    )
-    val launchRequests = _launchRequests
-
     /** Kick off: launch Google Phone; the service takes over from window events. */
     fun start() {
         if (running) {
             log("Already running — ignoring new trigger")
             return
         }
-
         if (!isServiceEnabled(context)) {
             log("Accessibility service not enabled — cannot automate")
             return
         }
-
         step = Step.LAUNCHING
         startedAt = now()
         lastActionAt = 0L
         attempts = 0
+        log("Started — launching Google Phone")
 
-        log("Started — requesting Google Phone launch")
-
-        if (!_launchRequests.tryEmit(Unit)) {
-            fail("Could not request dialer launch")
+        val intent = context.packageManager.getLaunchIntentForPackage(DIALER_PKG)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (intent == null) {
+            fail("Google Phone not installed")
+            return
         }
+        runCatching { context.startActivity(intent) }
+            .onFailure { fail("Cannot launch dialer: ${it.message}") }
     }
 
     fun markInDialer() { if (running) step = Step.IN_DIALER }
