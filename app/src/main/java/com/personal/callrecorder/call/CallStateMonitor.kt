@@ -6,6 +6,7 @@ import com.personal.callrecorder.automation.AutomationController
 import com.personal.callrecorder.contacts.ContactResolver
 import com.personal.callrecorder.data.entity.RecordingStatus
 import com.personal.callrecorder.data.repository.CallRepository
+import com.personal.callrecorder.data.repository.MissedCallRepository
 import com.personal.callrecorder.data.settings.AppSettings
 import com.personal.callrecorder.data.settings.SettingsRepository
 import com.personal.callrecorder.imports.RecordingImporter
@@ -27,7 +28,13 @@ import javax.inject.Singleton
  * Direction inference (no reliable API gives this directly on modern Android):
  *   IDLE → RINGING → OFF_HOOK   ⇒ INCOMING (answered)
  *   IDLE → OFF_HOOK             ⇒ OUTGOING
- *   IDLE → RINGING → IDLE       ⇒ missed incoming (never recorded)
+ *   IDLE → RINGING → IDLE       ⇒ missed incoming — recorded into
+ *                                  [MissedCallRepository]'s own table, not
+ *                                  call_records (21 Aug 2026, was previously
+ *                                  dropped on the floor entirely — explicit
+ *                                  request: "the call which are made and the
+ *                                  receiver haven't received the call... that
+ *                                  log is not gonna stored").
  *
  * Instances of [PhoneStateReceiver] are short-lived, so all state lives here in
  * a singleton.
@@ -37,6 +44,7 @@ class CallStateMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
     private val repository: CallRepository,
+    private val missedCallRepository: MissedCallRepository,
     private val contactResolver: ContactResolver,
     private val importer: RecordingImporter,
     private val time: TimeProvider,
@@ -48,8 +56,10 @@ class CallStateMonitor @Inject constructor(
     private var settings: AppSettings = AppSettings()
 
     private var lastState: CallState = CallState.IDLE
+    private val prefs = context.getSharedPreferences("call_state_monitor", Context.MODE_PRIVATE)
     private var sawRingingThisCall: Boolean = false
     private var pendingNumber: String? = null
+    private var ringStartTime: Long? = null
 
     /** True while the service has (or should have) an active recording. */
     private var activeSession: CallSession? = null
@@ -68,10 +78,12 @@ class CallStateMonitor @Inject constructor(
         when (state) {
             CallState.RINGING -> {
                 sawRingingThisCall = true
+                if (ringStartTime == null) ringStartTime = time.now()
                 if (!incomingNumber.isNullOrBlank()) pendingNumber = incomingNumber
             }
 
             CallState.OFF_HOOK -> {
+           prefs.edit().putBoolean("call_in_progress", true).apply()
                 // If the user has configured an OEM import folder, the phone's own
                 // recorder handles the audio — we defer entirely and do NOT attempt
                 // our own (failing) foreground recording. We just import afterwards.
@@ -85,6 +97,13 @@ class CallStateMonitor @Inject constructor(
 
             CallState.IDLE -> {
                 val realCallEnded = lastState == CallState.OFF_HOOK
+                // Rang and went straight back to idle — never connected. This
+                // check is deliberately on `lastState`, NOT `activeSession`:
+                // in OEM-import mode (settings.importFolderUri != null, e.g.
+                // OPPO's own recorder) activeSession is null for every call,
+                // answered or not, so gating on it would have flagged every
+                // OPPO call as missed.
+                val wasMissedCall = lastState == CallState.RINGING
                 if (activeSession != null) {
                     endSession()
                 }
@@ -93,9 +112,13 @@ class CallStateMonitor @Inject constructor(
                 if (settings.importFolderUri != null) {
                     scheduleImport()
                 }
+                if (wasMissedCall) {
+                    recordMissedCall(pendingNumber, ringStartTime ?: time.now())
+                }
                 // Reset per-call transient state.
                 sawRingingThisCall = false
                 pendingNumber = null
+                ringStartTime = null
                 if (realCallEnded) {
                     scheduleShareAutomation()
                 }
@@ -107,21 +130,14 @@ class CallStateMonitor @Inject constructor(
     private fun beginSession(number: String?, direction: CallDirection) {
         val snapshot = settings
         if (!snapshot.autoRecord || !directionAllowed(direction, snapshot)) {
-            Log.d(TAG, "Auto-record disabled for $direction; not recording")
+            Log.d(TAG, "Auto-record disabled for $direction")
             return
         }
-        val session = CallSession(number, direction, time.now())
-        activeSession = session
-        try {
-            context.startForegroundService(RecordingService.startIntent(context, session))
-        } catch (t: Throwable) {
-            // Android 12+ can refuse a background foreground-service start from a
-            // PHONE_STATE broadcast. Surface it as a logged, failed call rather
-            // than crashing — the user sees why nothing was recorded.
-            Log.e(TAG, "Could not start recording service", t)
-            activeSession = null
-            logCouldNotStart(session, t)
-        }
+
+        // Native Google Phone recording is started by GooglePhoneShareService.
+        // Do NOT start our own microphone-based RecordingService.
+        activeSession = CallSession(number, direction, time.now())
+        Log.d(TAG, "Native recording mode: session started for $direction")
     }
 
     /**
@@ -140,12 +156,19 @@ class CallStateMonitor @Inject constructor(
 
     private fun endSession() {
         activeSession = null
-        try {
-            // The service is already running in the foreground, so delivering a
-            // STOP command via startService is permitted even from background.
-            context.startService(RecordingService.stopIntent(context))
-        } catch (t: Throwable) {
-            Log.e(TAG, "Could not deliver stop to recording service", t)
+        Log.d(TAG, "Native recording mode: session ended")
+    }
+
+    /** RINGING → IDLE with no OFF_HOOK in between — logged to its own table, see MissedCallRecord. */
+    private fun recordMissedCall(number: String?, ringStart: Long) {
+        scope.launch {
+            val name = runCatching { contactResolver.resolveName(number) }.getOrNull()
+            missedCallRepository.record(
+                phoneNumber = number,
+                contactName = name,
+                ringStartTime = ringStart
+            )
+            Log.d(TAG, "Missed call recorded: ${number?.take(3)}…")
         }
     }
 
@@ -179,7 +202,7 @@ class CallStateMonitor @Inject constructor(
     }
     private fun scheduleShareAutomation() {
         scope.launch {
-            delay(6_000L)
+            delay(1_000L)
             if (!automationController.running) {
                 automationController.start()
             }
