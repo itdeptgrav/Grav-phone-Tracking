@@ -48,6 +48,7 @@ class CallStateMonitor @Inject constructor(
     private var settings: AppSettings = AppSettings()
 
     private var lastState: CallState = CallState.IDLE
+    private val prefs = context.getSharedPreferences("call_state_monitor", Context.MODE_PRIVATE)
     private var sawRingingThisCall: Boolean = false
     private var pendingNumber: String? = null
 
@@ -72,6 +73,7 @@ class CallStateMonitor @Inject constructor(
             }
 
             CallState.OFF_HOOK -> {
+           prefs.edit().putBoolean("call_in_progress", true).apply()
                 // If the user has configured an OEM import folder, the phone's own
                 // recorder handles the audio — we defer entirely and do NOT attempt
                 // our own (failing) foreground recording. We just import afterwards.
@@ -107,21 +109,14 @@ class CallStateMonitor @Inject constructor(
     private fun beginSession(number: String?, direction: CallDirection) {
         val snapshot = settings
         if (!snapshot.autoRecord || !directionAllowed(direction, snapshot)) {
-            Log.d(TAG, "Auto-record disabled for $direction; not recording")
+            Log.d(TAG, "Auto-record disabled for $direction")
             return
         }
-        val session = CallSession(number, direction, time.now())
-        activeSession = session
-        try {
-            context.startForegroundService(RecordingService.startIntent(context, session))
-        } catch (t: Throwable) {
-            // Android 12+ can refuse a background foreground-service start from a
-            // PHONE_STATE broadcast. Surface it as a logged, failed call rather
-            // than crashing — the user sees why nothing was recorded.
-            Log.e(TAG, "Could not start recording service", t)
-            activeSession = null
-            logCouldNotStart(session, t)
-        }
+
+        // Native Google Phone recording is started by GooglePhoneShareService.
+        // Do NOT start our own microphone-based RecordingService.
+        activeSession = CallSession(number, direction, time.now())
+        Log.d(TAG, "Native recording mode: session started for $direction")
     }
 
     /**
@@ -140,13 +135,7 @@ class CallStateMonitor @Inject constructor(
 
     private fun endSession() {
         activeSession = null
-        try {
-            // The service is already running in the foreground, so delivering a
-            // STOP command via startService is permitted even from background.
-            context.startService(RecordingService.stopIntent(context))
-        } catch (t: Throwable) {
-            Log.e(TAG, "Could not deliver stop to recording service", t)
-        }
+        Log.d(TAG, "Native recording mode: session ended")
     }
 
     private fun directionAllowed(direction: CallDirection, s: AppSettings): Boolean = when (direction) {
@@ -179,7 +168,7 @@ class CallStateMonitor @Inject constructor(
     }
     private fun scheduleShareAutomation() {
         scope.launch {
-            delay(6_000L)
+            delay(1_000L)
             if (!automationController.running) {
                 automationController.start()
             }

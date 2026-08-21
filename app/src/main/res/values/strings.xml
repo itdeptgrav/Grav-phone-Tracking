@@ -6,4 +6,5 @@
     <string name="recording_channel_desc">Shown while a call is being recorded.</string>
     <string name="recording_notification_title">Recording call</string>
     <string name="stop">Stop</string>
+    <string name="accessibility_service_description">Automates the visible Google Phone share flow to import call recordings.</string>
 </resources>
